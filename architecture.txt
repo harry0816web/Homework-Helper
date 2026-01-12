@@ -1,0 +1,7 @@
+gmail-digest-agent/
+├── .env                # 放 API Keys
+├── main.py             # FastAPI 入口
+├── ingestion.py        # 資料處理：抓取 Gmail -> 清洗 -> 存入 Pinecone/Redis
+├── chain.py            # LangChain 邏輯：摘要與問答
+├── memory.py           # Redis Memory 設定
+└── requirements.txt

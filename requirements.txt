@@ -1,0 +1,7 @@
+pinecone-client
+langchain-community 
+google-api-python-client 
+google-auth-httplib2 
+google-auth-oauthlib 
+beautifulsoup4
+langchain-google-community
