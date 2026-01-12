@@ -1,7 +1,15 @@
-pinecone-client
+flask>=3.0.0
+flask-session>=0.5.0
+python-dotenv>=1.0.0
+redis>=5.0.0
+pinecone-client>=3.0.0
+langchain-pinecone>=0.1.0
 langchain-community 
 google-api-python-client 
 google-auth-httplib2 
 google-auth-oauthlib 
 beautifulsoup4
 langchain-google-community
+langchain-google-genai>=1.0.0
+langchain>=0.1.0
+langchain-core>=0.1.0

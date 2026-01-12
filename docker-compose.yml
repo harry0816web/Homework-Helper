@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: email-summarizer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    networks:
+      - email-summarizer-network
+
+  flask:
+    build: .
+    container_name: email-summarizer-flask
+    ports:
+      - "8080:5000"  # 主機使用 8080 端口，容器內部使用 5000
+    env_file:
+      - .env
+    volumes:
+      - ./app:/app/app
+      - ./credentials:/app/credentials
+      - ./token.json:/app/token.json
+    depends_on:
+      - redis
+    networks:
+      - email-summarizer-network
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+volumes:
+  redis_data:
+
+networks:
+  email-summarizer-network:
+    driver: bridge
