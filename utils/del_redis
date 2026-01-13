@@ -1,0 +1,2 @@
+KEYS chat:*  # list all chat sessions
+DEL chat:{session_id}
