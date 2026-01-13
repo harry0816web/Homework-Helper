@@ -17,7 +17,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 複製應用程式程式碼
 COPY app/ ./app/
-COPY credentials/ ./credentials/
 
 # 暴露 Flask 預設端口
 EXPOSE 5000

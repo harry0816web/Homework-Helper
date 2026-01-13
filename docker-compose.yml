@@ -1,39 +1,48 @@
-version: '3.8'
-
 services:
-  redis:
-    image: redis:7-alpine
-    container_name: email-summarizer-redis
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    command: redis-server --appendonly yes
-    networks:
-      - email-summarizer-network
-
-  flask:
+  # 1. 你的 Flask 主程式
+  web:
     build: .
-    container_name: email-summarizer-flask
+    container_name: flask_app
     ports:
-      - "8080:5000"  # 主機使用 8080 端口，容器內部使用 5000
-    env_file:
-      - .env
+      - "5001:5000"  # 主機使用 5001 端口，容器內部使用 5000
     volumes:
-      - ./app:/app/app
-      - ./credentials:/app/credentials
-      - ./token.json:/app/token.json
+      - ./app:/app/app             # 程式碼掛載 (開發用)
+      - ./.env:/app/.env           # 環境變數
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434  # 從容器訪問主機上的 Ollama（本地應用）
+      - CHROMA_DB_HOST=chromadb 
+      - CHROMA_DB_PORT=8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # macOS/Windows: 允許容器訪問主機服務
     depends_on:
       - redis
-    networks:
-      - email-summarizer-network
+      - chromadb
+    restart: always
+
+  # 2. Redis (緩存 + 對話記憶)
+  redis:
+    image: redis/redis-stack:latest
+    container_name: redis_service
+    ports:
+      - "6379:6379"
+      - "8001:8001" # RedisInsight GUI
+    volumes:
+      - redis_data:/data
+    restart: always
+
+  # 3. ChromaDB (本地向量資料庫)
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: chroma_service
+    ports:
+      - "8000:8000"
+    volumes:
+      - chroma_data:/chroma/chroma
     environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
+      - IS_PERSISTENT=TRUE
+    restart: always
 
 volumes:
   redis_data:
-
-networks:
-  email-summarizer-network:
-    driver: bridge
+  chroma_data:
