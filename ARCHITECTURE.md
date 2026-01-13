@@ -1,4 +1,4 @@
-# Email Summarizer 專案架構學習指南
+# Homework Helper 專案架構學習指南
 
 > 本文件詳細說明如何使用 LangChain、LangGraph、RAG 技術以及 Flask 應用程式架構來建構一個智能問答系統。
 
@@ -83,10 +83,12 @@
 ## 技術棧
 
 ### 後端框架
+
 - **Flask**: 輕量級 Python Web 框架
 - **Blueprint**: Flask 模組化路由管理
 
 ### LangChain 生態系
+
 - **langchain**: 核心框架
 - **langchain-google-genai**: Google Gemini 整合
 - **langchain-ollama**: 本地 Embedding 模型
@@ -95,14 +97,17 @@
 - **langchain-text-splitters**: 文件分塊工具
 
 ### LangGraph
+
 - **langgraph**: 狀態圖工作流程管理
 - 用於建構複雜的 RAG 工作流程
 
 ### 資料儲存
+
 - **ChromaDB**: 開源向量資料庫，用於儲存文件嵌入向量
 - **Redis**: 記憶體資料庫，用於儲存對話歷史
 
 ### 部署
+
 - **Docker**: 容器化應用程式
 - **Docker Compose**: 多容器編排
 
@@ -117,15 +122,16 @@ from flask import Flask
 
 def create_app():
     app = Flask(__name__)
-    
+  
     # 註冊 Blueprint
     from app.routes import main_bp
     app.register_blueprint(main_bp)
-    
+  
     return app
 ```
 
 **設計模式：應用程式工廠 (Application Factory)**
+
 - 優點：支援多實例、測試友好、延遲初始化
 - 使用 `create_app()` 函數創建應用程式實例
 
@@ -146,49 +152,53 @@ def get_service():
 ```
 
 **設計模式：單例模式 (Singleton)**
+
 - `get_service()` 確保整個應用程式只有一個 `LangChainService` 實例
 - 避免重複初始化昂貴的資源（LLM、向量資料庫連線等）
 
 **API 端點：**
 
 #### `/api/upload` - 文件上傳
+
 ```python
 @main_bp.route('/api/upload', methods=['POST'])
 def upload_file():
     # 1. 接收檔案
     file = request.files['file']
-    
+  
     # 2. 暫存到磁碟
     save_path = os.path.join("/tmp", file.filename)
     file.save(save_path)
-    
+  
     # 3. 處理檔案（分塊、向量化、儲存）
     svc = get_service()
     chunks_count = svc.process_file(save_path, file.filename)
-    
+  
     # 4. 清理暫存檔
     os.remove(save_path)
-    
+  
     return jsonify({"status": "success", "chunks": chunks_count})
 ```
 
 **流程說明：**
+
 1. 接收前端上傳的檔案
 2. 暫存到 `/tmp` 目錄（LangChain Loader 需要實體檔案路徑）
 3. 呼叫服務層處理檔案
 4. 清理暫存檔
 
 #### `/api/chat` - 問答對話
+
 ```python
 @main_bp.route('/api/chat', methods=['POST'])
 def chat():
     data = request.json
     user_message = data.get('message')
     session_id = data.get('session_id', 'default_user')
-    
+  
     svc = get_service()
     result = svc.get_answer(user_message, session_id)
-    
+  
     return jsonify({
         "answer": result.get('answer'),
         "source_documents": result.get('sources', [])
@@ -196,6 +206,7 @@ def chat():
 ```
 
 **流程說明：**
+
 1. 接收使用者訊息和 session_id
 2. 呼叫服務層的 `get_answer()` 方法
 3. 返回 AI 回答和來源文件
@@ -213,6 +224,7 @@ RAG 是一種結合**檢索 (Retrieval)** 和**生成 (Generation)** 的技術�
 3. **生成階段**：LLM 基於上下文生成回答
 
 **優點：**
+
 - 減少 LLM 的幻覺 (Hallucination)
 - 可以引用具體來源
 - 知識庫可以持續更新
@@ -230,13 +242,13 @@ class LangChainService:
             temperature=0,
             convert_system_message_to_human=True
         )
-        
+      
         # 2. Embedding 模型 (文字向量化)
         self.embeddings = OllamaEmbeddings(
             model="nomic-embed-text",
             base_url="http://host.docker.internal:11434"
         )
-        
+      
         # 3. 向量資料庫
         self.chroma_client = chromadb.HttpClient(
             host="chromadb", 
@@ -247,12 +259,12 @@ class LangChainService:
             collection_name="my_knowledge_base",
             embedding_function=self.embeddings
         )
-        
+      
         # 4. 檢索器 (Retriever)
         self.retriever = self.vector_store.as_retriever(
             search_kwargs={"k": 3}  # 返回最相似的 3 個文件
         )
-        
+      
         # 5. 建構 LangGraph 工作流程
         self.app = self.build_graph()
 ```
@@ -274,25 +286,26 @@ def process_file(self, file_path, original_filename):
     else:
         loader = TextLoader(file_path, encoding='utf-8')
     docs = loader.load()
-    
+  
     # 2. 文件分塊 (Chunking)
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,      # 每個塊 1000 字元
         chunk_overlap=200      # 塊之間重疊 200 字元
     )
     splits = text_splitter.split_documents(docs)
-    
+  
     # 3. 添加元資料
     for split in splits:
         split.metadata['source'] = original_filename
-    
+  
     # 4. 向量化並儲存到 ChromaDB
     self.vector_store.add_documents(documents=splits)
-    
+  
     return len(splits)
 ```
 
 **文件分塊的重要性：**
+
 - LLM 有 Token 限制，不能一次處理整個文件
 - 分塊可以讓檢索更精準（只檢索相關段落）
 - 重疊 (overlap) 確保上下文不丟失
@@ -317,6 +330,7 @@ class GraphState(TypedDict):
 ```
 
 **TypedDict 說明：**
+
 - 定義了 Graph 中流動的資料結構
 - 每個節點可以讀取和更新這些狀態
 
@@ -328,14 +342,15 @@ class GraphState(TypedDict):
 def retrieve(self, state: GraphState):
     """從向量資料庫中檢索相關文件"""
     question = state.get("question", "")
-    
+  
     # 使用 Retriever 搜尋相關文件
     documents = self.retriever.invoke(question)
-    
+  
     return {"documents": documents, "question": question}
 ```
 
 **功能：**
+
 - 將使用者問題轉換為向量
 - 在 ChromaDB 中搜尋最相似的 k 個文件塊
 - 返回候選文件列表
@@ -347,22 +362,22 @@ def grade_documents(self, state: GraphState):
     """使用 LLM 評估文件與問題的相關性"""
     question = state.get("question", "")
     documents = state.get("documents", [])
-    
+  
     # 定義評分器的輸出結構
     class GradeDocuments(BaseModel):
         binary_score: str = Field(description="'yes' 或 'no'")
-    
+  
     # 使用結構化輸出
     structured_llm_grader = self.llm.with_structured_output(GradeDocuments)
-    
+  
     # 評分提示詞
     grade_prompt = ChatPromptTemplate.from_messages([
         ("system", "評估文件與問題的相關性"),
         ("human", "文件: {document}\n問題: {question}"),
     ])
-    
+  
     retrieval_grader = grade_prompt | structured_llm_grader
-    
+  
     # 過濾不相關的文件
     filtered_docs = []
     for doc in documents:
@@ -372,16 +387,18 @@ def grade_documents(self, state: GraphState):
         })
         if score.binary_score == "yes":
             filtered_docs.append(doc)
-    
+  
     return {"documents": filtered_docs}
 ```
 
 **為什麼需要評分？**
+
 - 向量搜尋可能返回不相關的文件（關鍵字匹配但語意無關）
 - LLM 可以更準確地判斷語意相關性
 - 過濾掉不相關文件，提升最終回答品質
 
 **結構化輸出 (Structured Output)：**
+
 - 使用 Pydantic 定義輸出格式
 - LLM 會按照定義的格式返回結果
 - 確保程式碼可以可靠地解析 LLM 輸出
@@ -394,10 +411,10 @@ def generate(self, state: GraphState):
     question = state.get("question", "")
     documents = state.get("documents", [])
     messages = state.get("messages", [])  # 對話歷史
-    
+  
     if not documents:
         return {"generation": "抱歉，找不到相關資訊。"}
-    
+  
     # 建構 RAG Prompt
     prompt = ChatPromptTemplate.from_messages([
         (
@@ -407,22 +424,23 @@ def generate(self, state: GraphState):
         ),
         ("placeholder", "{messages}"),  # 對話歷史
     ])
-    
+  
     rag_chain = prompt | self.llm
-    
+  
     # 將文件合併為上下文
     docs_txt = "\n\n".join([d.page_content for d in documents])
-    
+  
     # 生成回答
     generation = rag_chain.invoke({
         "context": docs_txt,
         "messages": messages
     })
-    
+  
     return {"generation": generation.content}
 ```
 
 **RAG Prompt 設計：**
+
 - **System Message**: 定義 AI 角色和 Context
 - **Messages Placeholder**: 自動填入對話歷史
 - **Context**: 檢索到的文件內容
@@ -432,18 +450,18 @@ def generate(self, state: GraphState):
 ```python
 def build_graph(self):
     workflow = StateGraph(GraphState)
-    
+  
     # 添加節點
     workflow.add_node("retrieve", self.retrieve)
     workflow.add_node("grade_documents", self.grade_documents)
     workflow.add_node("generate", self.generate)
-    
+  
     # 定義邊 (Edge) - 執行順序
     workflow.add_edge(START, "retrieve")
     workflow.add_edge("retrieve", "grade_documents")
     workflow.add_edge("grade_documents", "generate")
     workflow.add_edge("generate", END)
-    
+  
     return workflow.compile()
 ```
 
@@ -455,6 +473,7 @@ START → retrieve → grade_documents → generate → END
 ```
 
 **執行流程：**
+
 1. **START** → 接收使用者問題
 2. **retrieve** → 從向量資料庫檢索候選文件
 3. **grade_documents** → 使用 LLM 評分並過濾文件
@@ -471,12 +490,12 @@ def get_answer(self, question, session_id):
         url=self.redis_url,
         key_prefix="chat:"
     )
-    
+  
     # 2. 準備輸入
     current_messages = chat_history.messages + [
         HumanMessage(content=question)
     ]
-    
+  
     inputs = {
         "messages": current_messages,
         "question": question,
@@ -484,17 +503,17 @@ def get_answer(self, question, session_id):
         "generation": "",
         "relevance": ""
     }
-    
+  
     # 3. 執行 Graph
     final_state = self.app.invoke(inputs)
-    
+  
     # 4. 取得結果
     final_answer = final_state.get("generation", "")
-    
+  
     # 5. 更新 Redis 記憶
     chat_history.add_user_message(question)
     chat_history.add_ai_message(final_answer)
-    
+  
     return {"answer": final_answer, "sources": [...]}
 ```
 
@@ -568,14 +587,14 @@ LangGraph 執行
 ```python
 class RedisService:
     _instance = None
-    
+  
     def __new__(cls):
         """單例模式"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
             cls._instance.init_connection()
         return cls._instance
-    
+  
     def init_connection(self):
         self.redis_url = "redis://redis:6379/0"
         self.pool = redis.ConnectionPool.from_url(
@@ -586,11 +605,13 @@ class RedisService:
 ```
 
 **用途：**
+
 - 儲存對話歷史（每個 session_id 獨立）
 - 使用連線池提升效能
 - 單例模式確保只有一個連線池
 
 **對話歷史結構：**
+
 ```
 Redis Key: "chat:{session_id}"
 Value: List of messages
@@ -603,17 +624,20 @@ Value: List of messages
 ### 2. 向量資料庫 (ChromaDB)
 
 **為什麼需要向量資料庫？**
+
 - 傳統資料庫無法進行語意搜尋
 - 向量資料庫支援相似度搜尋（Cosine Similarity）
 - 可以快速找出語意相關的文件
 
 **ChromaDB 特點：**
+
 - 開源、輕量級
 - 支援持久化儲存
 - 提供 HTTP API
 - 整合 LangChain 生態系
 
 **資料結構：**
+
 ```
 Collection: "my_knowledge_base"
   Document 1:
@@ -626,16 +650,19 @@ Collection: "my_knowledge_base"
 ### 3. Embedding 模型 (Ollama)
 
 **什麼是 Embedding？**
+
 - 將文字轉換為數值向量
 - 語意相似的文字會有相似的向量
 - 用於計算文字之間的相似度
 
 **Ollama 本地模型：**
+
 - `nomic-embed-text`: 開源 Embedding 模型
 - 可以在本地運行，不需要 API Key
 - 適合開發和測試環境
 
 **Embedding 流程：**
+
 ```
 文字 → Embedding 模型 → 向量
 "什麼是 Python？" → [0.1, 0.2, ..., 0.9]
@@ -645,11 +672,13 @@ Collection: "my_knowledge_base"
 ### 4. LLM (Google Gemini)
 
 **為什麼選擇 Gemini？**
+
 - 免費額度較高
 - 支援結構化輸出
 - 回應速度快
 
 **使用場景：**
+
 1. **文件評分**：判斷文件與問題的相關性
 2. **文字生成**：基於 Context 生成回答
 3. **結構化輸出**：確保輸出格式一致
@@ -691,11 +720,13 @@ services:
 ```
 
 **服務說明：**
+
 - **web**: Flask 應用程式容器
 - **redis**: 對話記憶儲存
 - **chromadb**: 向量資料庫
 
 **網路架構：**
+
 - 所有服務在同一個 Docker 網路中
 - 使用服務名稱進行內部通訊（`redis`, `chromadb`）
 - Ollama 在主機上運行，使用 `host.docker.internal` 訪問
@@ -707,65 +738,79 @@ services:
 ### 1. Flask 應用程式設計模式
 
 ✅ **應用程式工廠模式**
+
 - 使用 `create_app()` 函數創建應用程式
 - 支援多實例和測試
 
 ✅ **Blueprint 模組化**
+
 - 將路由組織成模組
 - 提升程式碼可維護性
 
 ✅ **單例模式**
+
 - 確保服務只初始化一次
 - 節省資源和提升效能
 
 ### 2. LangChain 核心概念
 
 ✅ **Document Loaders**
+
 - 支援多種檔案格式（PDF、Text、CSV 等）
 - 自動處理編碼和格式轉換
 
 ✅ **Text Splitters**
+
 - 智能分塊策略
 - 保留上下文（overlap）
 
 ✅ **Vector Stores**
+
 - 統一的向量資料庫介面
 - 支援多種後端（ChromaDB、Pinecone、Weaviate 等）
 
 ✅ **Retrievers**
+
 - 封裝檢索邏輯
 - 支援多種搜尋策略（相似度、MMR、自定義等）
 
 ### 3. LangGraph 工作流程設計
 
 ✅ **狀態管理**
+
 - 使用 TypedDict 定義狀態結構
 - 節點之間通過狀態傳遞資料
 
 ✅ **節點設計**
+
 - 每個節點職責單一
 - 節點可以讀取和更新狀態
 
 ✅ **邊 (Edge) 設計**
+
 - 定義執行順序
 - 可以根據條件動態路由（本專案未使用，但 LangGraph 支援）
 
 ### 4. RAG 最佳實踐
 
 ✅ **文件分塊**
+
 - 適當的 chunk_size（1000-2000 字元）
 - 使用 overlap 保留上下文
 
 ✅ **文件評分**
+
 - 使用 LLM 過濾不相關文件
 - 提升最終回答品質
 
 ✅ **Prompt 設計**
+
 - 明確的 System Message
 - 清晰的 Context 格式
 - 保留對話歷史
 
 ✅ **對話記憶**
+
 - 使用 Redis 儲存歷史
 - 支援多輪對話
 - 每個 session 獨立
@@ -773,14 +818,17 @@ services:
 ### 5. 錯誤處理與除錯
 
 ✅ **異常處理**
+
 - 在關鍵節點加入 try-except
 - 提供友好的錯誤訊息
 
 ✅ **日誌記錄**
+
 - 記錄關鍵步驟
 - 方便追蹤問題
 
 ✅ **除錯工具**
+
 - `get_graph_trace()` 方法
 - 可以查看每個節點的執行狀態
 
@@ -817,7 +865,7 @@ workflow.add_conditional_edges(
 def grade_answer(self, state: GraphState):
     question = state.get("question", "")
     generation = state.get("generation", "")
-    
+  
     # 評分回答是否解決了問題
     # 如果評分低，可以重新生成或要求使用者澄清
     ...
@@ -826,6 +874,7 @@ def grade_answer(self, state: GraphState):
 ### 3. 多輪檢索 (Multi-Retrieval)
 
 如果第一次檢索結果不理想，可以：
+
 - 重新表述問題
 - 擴大搜尋範圍
 - 使用不同的檢索策略
@@ -868,12 +917,14 @@ for output in self.app.stream(inputs):
 6. **Redis**: 對話記憶管理
 
 **關鍵學習點：**
+
 - 如何設計分層架構（路由層、服務層、資料層）
 - 如何使用 LangGraph 建構複雜工作流程
 - 如何實作 RAG 系統的核心功能
 - 如何整合多種技術棧（Flask、Redis、ChromaDB、LLM）
 
 **下一步學習方向：**
+
 - 探索更複雜的 LangGraph 模式（Agent、Tool Calling）
 - 優化 RAG 流程（重新排序、混合檢索）
 - 實作更進階的功能（多模態、知識圖譜）
