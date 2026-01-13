@@ -3,23 +3,101 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 助教 - RAG 系統</title>
+    <title>Homework Helper</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { background-color: #f4f6f9; height: 100vh; overflow: hidden; }
-        .main-container { height: 100%; padding-top: 20px; padding-bottom: 20px; }
-        .card { height: 100%; border: none; shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        * {
+            box-sizing: border-box;
+        }
+        html, body { 
+            height: 100%; 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden;
+        }
+        body { 
+            background-color: #f4f6f9; 
+        }
+        .main-container { 
+            height: 100vh; 
+            padding: 20px; 
+            overflow: hidden;
+        }
+        .row.h-100 {
+            height: calc(100vh - 40px);
+            margin: 0;
+        }
+        .card { 
+            height: 100%; 
+            border: none; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        .chat-card {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            overflow: hidden;
+        }
+        .card-header {
+            flex-shrink: 0;
+        }
         .chat-history { 
-            flex-grow: 1; 
+            flex: 1;
             overflow-y: auto; 
+            overflow-x: hidden;
             padding: 20px; 
             background-color: #fff;
-            border-bottom: 1px solid #eee;
+            min-height: 0;
+            height: 0;
+            scroll-behavior: smooth;
+            -webkit-overflow-scrolling: touch;
         }
-        .message { margin-bottom: 15px; max-width: 80%; padding: 10px 15px; border-radius: 15px; }
-        .message.user { background-color: #007bff; color: white; align-self: flex-end; margin-left: auto; }
-        .message.bot { background-color: #e9ecef; color: black; align-self: flex-start; }
-        .loading { font-style: italic; color: #888; font-size: 0.9em; }
+        .chat-history::-webkit-scrollbar {
+            width: 8px;
+        }
+        .chat-history::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 4px;
+        }
+        .chat-history::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+        .chat-history::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+        .message { 
+            margin-bottom: 15px; 
+            max-width: 80%; 
+            padding: 10px 15px; 
+            border-radius: 15px; 
+            word-wrap: break-word;
+            word-break: break-word;
+            white-space: pre-wrap;
+            overflow-wrap: break-word;
+            overflow: visible;
+        }
+        .message.user { 
+            background-color: #007bff; 
+            color: white; 
+            margin-left: auto;
+            text-align: left;
+        }
+        .message.bot { 
+            background-color: #e9ecef; 
+            color: black; 
+        }
+        .loading { 
+            font-style: italic; 
+            color: #888; 
+            font-size: 0.9em; 
+        }
+        .input-area {
+            flex-shrink: 0;
+        }
     </style>
 </head>
 <body>
@@ -27,9 +105,9 @@
 <div class="container-fluid main-container">
     <div class="row h-100">
         
-        <div class="col-md-4 mb-3 mb-md-0">
-            <div class="card p-4">
-                <h4 class="mb-4">📚 知識庫管理</h4>
+        <div class="col-md-4 h-100">
+            <div class="card p-4 h-100">
+                <h4 class="mb-4">Upload Hws</h4>
                 
                 <div class="mb-3">
                     <label for="topicInput" class="form-label">作業/專案主題</label>
@@ -54,17 +132,17 @@
             </div>
         </div>
 
-        <div class="col-md-8">
-            <div class="card d-flex flex-column">
-                <div class="card-header bg-white">
-                    <h5 class="m-0">🤖 AI 助教 Chat</h5>
+        <div class="col-md-8 h-100">
+            <div class="card chat-card h-100">
+                <div class="card-header bg-white flex-shrink-0">
+                    <h5 class="m-0">AI 助教 Chat</h5>
                 </div>
                 
-                <div id="chatHistory" class="chat-history d-flex flex-column">
+                <div id="chatHistory" class="chat-history">
                     <div class="message bot">你好！我是你的 AI 助教。請先上傳作業相關檔案，然後問我問題。</div>
                 </div>
 
-                <div class="p-3 bg-light">
+                <div class="p-3 bg-light input-area">
                     <div class="input-group">
                         <input type="text" id="userMessage" class="form-control" placeholder="輸入你的問題..." onkeypress="handleEnter(event)">
                         <button class="btn btn-primary" onclick="sendMessage()">發送</button>
@@ -118,13 +196,13 @@
 
             if (response.ok) {
                 statusDiv.className = "alert alert-success";
-                statusDiv.innerText = "✅ " + data.message;
+                statusDiv.innerText = data.message;
             } else {
                 throw new Error(data.error || "上傳失敗");
             }
         } catch (error) {
             statusDiv.className = "alert alert-danger";
-            statusDiv.innerText = "❌ " + error.message;
+            statusDiv.innerText = "錯誤: " + error.message;
         } finally {
             btn.disabled = false;
             btn.innerText = "上傳並建立索引";
@@ -168,7 +246,7 @@
 
         } catch (error) {
             removeMessage(loadingId);
-            appendMessage('bot', "❌ 發生錯誤：" + error.message);
+            appendMessage('bot', "發生錯誤：" + error.message);
         }
     }
 
@@ -180,9 +258,27 @@
         div.innerText = text;
         div.id = isLoading ? 'loading-msg' : '';
         history.appendChild(div);
-        history.scrollTop = history.scrollHeight;
+        // 自動滾動到底部（當有新訊息時）
+        scrollToBottom();
         return div.id;
     }
+
+    // 滾動到底部函式
+    function scrollToBottom() {
+        const history = document.getElementById('chatHistory');
+        // 使用 requestAnimationFrame 確保 DOM 更新後再滾動
+        requestAnimationFrame(() => {
+            history.scrollTo({
+                top: history.scrollHeight,
+                behavior: 'smooth'
+            });
+        });
+    }
+
+    // 頁面載入時確保滾動到底部
+    window.addEventListener('load', function() {
+        scrollToBottom();
+    });
 
     function removeMessage(id) {
         const el = document.getElementById(id);

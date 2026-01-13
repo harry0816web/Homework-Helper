@@ -8,11 +8,13 @@ services:
     volumes:
       - ./app:/app/app            
       - ./.env:/app/.env
+      - ./utils:/app/utils
     environment:
       - REDIS_URL=redis://redis:6379/0
       - OLLAMA_BASE_URL=http://host.docker.internal:11434  # able to access host.docker.internal from container
       - CHROMA_DB_HOST=chromadb 
       - CHROMA_DB_PORT=8000
+      - PYTHONUNBUFFERED=1  # disable buffering
     extra_hosts:
       - "host.docker.internal:host-gateway"  # allow container to access host services
     depends_on:

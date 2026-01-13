@@ -1,4 +1,4 @@
-# Homework Helper - AI 助教系統
+# Homework Helper 
 
 一個基於 **LangChain**、**LangGraph** 和 **RAG** 技術的智能問答系統，可以上傳作業相關文件並進行智能問答。
 
@@ -30,13 +30,14 @@ Google Gemini (LLM)
 ```
 
 **核心技術棧：**
+
 - **Flask**: Web 框架
 - **LangChain**: AI 應用程式開發框架
 - **LangGraph**: 複雜工作流程管理
 - **ChromaDB**: 向量資料庫（語意搜尋）
 - **Redis**: 對話記憶儲存
 - **Ollama**: 本地 Embedding 模型
-- **Google Gemini**: 大語言模型
+- **Ollama (gemini-3-flash)**: 本地LLM
 
 ## 🚀 快速開始
 
@@ -44,10 +45,9 @@ Google Gemini (LLM)
 
 - Python 3.11+
 - Docker 和 Docker Compose
-- Ollama（本地運行 Embedding 模型）
-- Google Gemini API Key
+- Ollama（本地運行 LLM 和 Embedding 模型）
 
-### 1. 安裝 Ollama 和 Embedding 模型
+### 1. 安裝 Ollama 和下載模型
 
 ```bash
 # 安裝 Ollama (如果還沒安裝)
@@ -59,8 +59,9 @@ brew install ollama
 # 啟動 Ollama 服務
 ollama serve
 
-# 在另一個終端下載 Embedding 模型
-ollama pull nomic-embed-text
+# 在另一個終端下載所需的模型
+ollama pull gemini-3-flash    # LLM 模型
+ollama pull nomic-embed-text  # Embedding 模型
 ```
 
 ### 2. 設定環境變數
@@ -68,9 +69,6 @@ ollama pull nomic-embed-text
 建立 `.env` 檔案：
 
 ```env
-# Google Gemini API Key (必填)
-GOOGLE_API_KEY=your-google-gemini-api-key
-
 # Redis 連線 (Docker Compose 會自動設定)
 REDIS_URL=redis://redis:6379/0
 
@@ -82,10 +80,7 @@ CHROMA_DB_HOST=chromadb
 CHROMA_DB_PORT=8000
 ```
 
-**取得 Google Gemini API Key：**
-1. 前往 [Google AI Studio](https://makersuite.google.com/app/apikey)
-2. 建立新的 API Key
-3. 將 Key 填入 `.env` 檔案
+**注意：** 不再需要 Google Gemini API Key，所有模型都在本地運行。
 
 ### 3. 啟動服務
 
@@ -109,7 +104,6 @@ pip install -r requirements.txt
 docker-compose up -d redis chromadb
 
 # 設定環境變數
-export GOOGLE_API_KEY=your-api-key
 export REDIS_URL=redis://localhost:6379/0
 export OLLAMA_BASE_URL=http://localhost:11434
 export CHROMA_DB_HOST=localhost
@@ -150,6 +144,7 @@ file: <檔案>
 ```
 
 **回應：**
+
 ```json
 {
   "status": "success",
@@ -170,6 +165,7 @@ Content-Type: application/json
 ```
 
 **回應：**
+
 ```json
 {
   "answer": "Python 是一種高階程式語言...",
@@ -219,13 +215,12 @@ homework-helper/
 
 ## ⚙️ 環境變數
 
-| 變數名稱 | 說明 | 必填 | 預設值 |
-|---------|------|------|--------|
-| `GOOGLE_API_KEY` | Google Gemini API Key | ✅ | - |
-| `REDIS_URL` | Redis 連線 URL | ❌ | `redis://redis:6379/0` |
-| `OLLAMA_BASE_URL` | Ollama 服務地址 | ❌ | `http://host.docker.internal:11434` |
-| `CHROMA_DB_HOST` | ChromaDB 主機 | ❌ | `chromadb` |
-| `CHROMA_DB_PORT` | ChromaDB 端口 | ❌ | `8000` |
+| 變數名稱            | 說明                  | 必填 | 預設值                                |
+| ------------------- | --------------------- | ---- | ------------------------------------- |
+| `REDIS_URL`       | Redis 連線 URL        | ❌   | `redis://redis:6379/0`              |
+| `OLLAMA_BASE_URL` | Ollama 服務地址       | ❌   | `http://host.docker.internal:11434` |
+| `CHROMA_DB_HOST`  | ChromaDB 主機         | ❌   | `chromadb`                          |
+| `CHROMA_DB_PORT`  | ChromaDB 端口         | ❌   | `8000`                              |
 
 ## 🐳 Docker 服務
 
@@ -256,7 +251,7 @@ pip install -r requirements.txt
 
 # 設定環境變數
 export FLASK_ENV=development
-export GOOGLE_API_KEY=your-key
+export OLLAMA_BASE_URL=http://localhost:11434
 
 # 啟動應用程式
 flask run --debug
@@ -295,6 +290,7 @@ MIT License
 ### Q: Ollama 無法連線？
 
 **A:** 確保 Ollama 服務正在運行：
+
 ```bash
 ollama serve
 ```
@@ -304,6 +300,7 @@ ollama serve
 ### Q: ChromaDB 連線失敗？
 
 **A:** 確保 ChromaDB 容器正在運行：
+
 ```bash
 docker-compose ps
 docker-compose logs chromadb
@@ -312,6 +309,7 @@ docker-compose logs chromadb
 ### Q: 如何清除對話歷史？
 
 **A:** 清除 Redis 中的對話資料：
+
 ```bash
 docker exec -it redis_service redis-cli
 > KEYS chat:*
@@ -321,6 +319,7 @@ docker exec -it redis_service redis-cli
 ### Q: 如何重置知識庫？
 
 **A:** 刪除 ChromaDB 的持久化資料：
+
 ```bash
 docker-compose down -v
 docker-compose up -d

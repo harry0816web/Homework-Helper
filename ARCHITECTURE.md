@@ -70,7 +70,8 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                      LLM 服務層 (AI Models)                   │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │  Google Gemini (gemini-2.5-flash)                    │   │
+│  │  Ollama (gemini-3-flash)                             │   │
+│  │  - 本地運行，無需 API Key                            │   │
 │  │  - 文字生成                                            │   │
 │  │  - 文件評分                                            │   │
 │  │  - 結構化輸出                                          │   │
@@ -90,8 +91,7 @@
 ### LangChain 生態系
 
 - **langchain**: 核心框架
-- **langchain-google-genai**: Google Gemini 整合
-- **langchain-ollama**: 本地 Embedding 模型
+- **langchain-ollama**: 本地 LLM 和 Embedding 模型
 - **langchain-chroma**: ChromaDB 向量資料庫整合
 - **langchain-community**: 社群擴充套件
 - **langchain-text-splitters**: 文件分塊工具
@@ -236,17 +236,20 @@ RAG 是一種結合**檢索 (Retrieval)** 和**生成 (Generation)** 的技術�
 ```python
 class LangChainService:
     def __init__(self):
-        # 1. LLM (大語言模型)
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0,
-            convert_system_message_to_human=True
+        # 1. 設定 Ollama URL
+        ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
+        
+        # 2. LLM (使用本地 Ollama)
+        self.llm = ChatOllama(
+            model="gemini-3-flash",
+            base_url=ollama_url,
+            temperature=0
         )
       
-        # 2. Embedding 模型 (文字向量化)
+        # 3. Embedding 模型 (文字向量化)
         self.embeddings = OllamaEmbeddings(
             model="nomic-embed-text",
-            base_url="http://host.docker.internal:11434"
+            base_url=ollama_url
         )
       
         # 3. 向量資料庫
@@ -365,7 +368,7 @@ def grade_documents(self, state: GraphState):
   
     # 定義評分器的輸出結構
     class GradeDocuments(BaseModel):
-        binary_score: str = Field(description="'yes' 或 'no'")
+        binary_score: str = Field(description="'yes' or 'no'")
   
     # 使用結構化輸出
     structured_llm_grader = self.llm.with_structured_output(GradeDocuments)
@@ -669,19 +672,26 @@ Collection: "my_knowledge_base"
 "Python 是什麼？" → [0.11, 0.21, ..., 0.91]  (相似向量)
 ```
 
-### 4. LLM (Google Gemini)
+### 4. LLM (Ollama - gemini-3-flash)
 
-**為什麼選擇 Gemini？**
+**為什麼使用本地 Ollama？**
 
-- 免費額度較高
+- 完全本地運行，無需 API Key
+- 資料隱私性高，不會上傳到外部服務
 - 支援結構化輸出
-- 回應速度快
+- 可離線運行
 
 **使用場景：**
 
 1. **文件評分**：判斷文件與問題的相關性
 2. **文字生成**：基於 Context 生成回答
 3. **結構化輸出**：確保輸出格式一致
+
+**模型設定：**
+
+- 模型名稱：`gemini-3-flash`
+- 運行方式：本地 Ollama 服務
+- 服務地址：`http://host.docker.internal:11434`（從容器訪問主機）
 
 ---
 

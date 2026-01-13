@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, request, jsonify
 import os
+import sys
 import traceback
 from app.services.langchain_svc import LangChainService
 
@@ -66,6 +67,13 @@ def chat():
         # 如果是第一次來，後端可以產生一個回傳給他，或者暫時用預設值測試
         session_id = "default_user" 
 
+    # langchain log
+    print("=" * 80)
+    print(f"[API] POST /api/chat - Question: {user_message}")
+    print(f"[API] Session ID: {session_id}")
+    print("=" * 80)
+    sys.stdout.flush()  # flush the log
+
     try:
         svc = get_service()
         # 傳入 session_id
@@ -76,6 +84,13 @@ def chat():
         if not answer or answer == 'None' or answer == 'undefined':
             answer = "抱歉，無法產生回應。請確認知識庫中是否有相關資料。"
         
+        # langchain log completed
+        print("=" * 80)
+        print(f"[API] POST /api/chat - Completed successfully")
+        print(f"[API] Answer length: {len(answer)} characters")
+        print(f"[API] Source documents: {len(result.get('sources', []))} files")
+        print("=" * 80)
+        sys.stdout.flush()  
         return jsonify({
             "answer": answer,
             "source_documents": result.get('sources', []),
@@ -86,6 +101,7 @@ def chat():
         error_traceback = traceback.format_exc()
         print(f"Chat error: {e}")
         print(error_traceback)
+        sys.stdout.flush()
         return jsonify({
             "error": str(e),
             "traceback": error_traceback if os.getenv('FLASK_ENV') == 'development' else None
