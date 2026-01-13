@@ -24,47 +24,48 @@ from app.services.redis_svc import redis_svc  # <--- 引入剛剛寫好的服務
 from pydantic import BaseModel, Field
 # ------------------------------
 
-# --- LangGraph 核心 ---
+# --- LangGraph ---
 from langgraph.graph import END, StateGraph, START
 
 import chromadb
 
-# --- 定義 Graph 的狀態 (State) ---
+# --- Define Graph State ---
+# for the graph to flow data between nodes
 class GraphState(TypedDict):
     question: str
     messages: List[BaseMessage]
     documents: List[Document]
     generation: str
-    relevance: str
 
-# --- 定義評分器的資料結構 ---
+# --- Structured Output for Graders ---
 class GradeDocuments(BaseModel):
-    """評分檢索到的文件是否與問題相關"""
+    """grade if the retrieved documents are relevant to the question"""
     binary_score: str = Field(description="文件是否與問題相關，'yes' 或 'no'")
 
 class GradeAnswer(BaseModel):
-    """評分回答是否解決了問題"""
+    """grade if the answer is relevant to the question"""
     binary_score: str = Field(description="回答是否解決了問題，'yes' 或 'no'")
 
+# --- LangChainService ---
 class LangChainService:
     def __init__(self):
-        # 1. 設定 Ollama URL
+        # 1. Set Ollama URL
         ollama_url = os.getenv("OLLAMA_BASE_URL", "http://host.docker.internal:11434")
         
-        # 2. 設定 LLM (使用本地 Ollama)
+        # 2. Set LLM (using local Ollama)
         self.llm = ChatOllama(
             model="gemini-3-flash-preview",
             base_url=ollama_url,
             temperature=0
         )
 
-        # 3. 設定 Embeddings (使用本地 Ollama)
+        # 3. Set Embeddings
         self.embeddings = OllamaEmbeddings(
             model="nomic-embed-text",
             base_url=ollama_url
         )
 
-        # 4. 設定 ChromaDB
+        # 4. Set ChromaDB and Retriever
         chroma_host = os.getenv("CHROMA_DB_HOST", "chromadb")
         chroma_port = int(os.getenv("CHROMA_DB_PORT", 8000))
         
@@ -74,9 +75,9 @@ class LangChainService:
             collection_name="my_knowledge_base",
             embedding_function=self.embeddings
         )
-        self.retriever = self.vector_store.as_retriever(search_kwargs={"k": 8})  # increase retrieval results
+        self.retriever = self.vector_store.as_retriever(search_kwargs={"k": 8})  # k -> 8 to increase retrieval results
 
-        # 初始化 Graph
+        # Initialize Graph
         self.app = self.build_graph()
 
         self.redis_url = redis_svc.get_url()
@@ -86,10 +87,10 @@ class LangChainService:
     # ==========================
 
     def retrieve(self, state: GraphState):
-        """節點：檢索文件"""
+        """retrieve documents from vector store"""
         question = state.get("question", "")
         if not question:
-            # 如果沒有 question，嘗試從 messages 中取得最後一個用戶訊息
+            # if no question, try to get the last user message from messages
             messages = state.get("messages", [])
             if messages:
                 last_msg = messages[-1]
@@ -99,17 +100,18 @@ class LangChainService:
                     question = last_msg.get('content', '')
         
         log_print(f"[LangGraph Node] RETRIEVE - Starting retrieval for question: {question[:100]}...")
+        # get chunks from vector store
         documents = self.retriever.invoke(question) if question else []
-        log_print(f"[LangGraph Node] RETRIEVE - Retrieved {len(documents)} documents from vector store")
+        log_print(f"[LangGraph Node] RETRIEVE - Retrieved {len(documents)} chunks from vector store")
         return {"documents": documents, "question": question}
 
     def grade_documents(self, state: GraphState):
-        """節點：評分並過濾文件"""
+        """grade documents and filter out irrelevant documents"""
         question = state.get("question", "")
         documents = state.get("documents", [])
         
         if not question:
-            # 如果沒有 question，嘗試從 messages 中取得
+            # if no question, try to get the last user message from messages
             messages = state.get("messages", [])
             if messages:
                 last_msg = messages[-1]
@@ -131,6 +133,7 @@ class LangChainService:
             ("human", "Retrieved document: \n\n {document} \n\n User question: {question}"),
         ])
         
+        # formatted prompt and get structured output
         retrieval_grader = grade_prompt | structured_llm_grader
         
         filtered_docs = []
@@ -163,13 +166,13 @@ class LangChainService:
         return {"documents": filtered_docs, "question": question}
 
     def generate(self, state: GraphState):
-        """節點：生成回答"""
+        """generate answer based on the retrieved documents"""
         question = state.get("question", "")
         documents = state.get("documents", [])
-        messages = state.get("messages", []) # <--- 1. 務必從 state 取得完整的對話歷史
+        messages = state.get("messages", []) # get the complete conversation history from state
         
         if not question and messages:
-            # 如果沒有 question，從 messages 中取得最後一個用戶訊息
+            # if no question, get the last user message from messages
             last_msg = messages[-1]
             if hasattr(last_msg, 'content'):
                 question = last_msg.content
@@ -184,8 +187,7 @@ class LangChainService:
             log_print(f"[LangGraph Node] GENERATE - No documents available, returning default message")
             return {"documents": [], "question": question, "generation": "抱歉，我在知識庫中找不到與您問題相關的有效資訊。"}
 
-        # --- 2. 改進的 Prompt 結構 ---
-        # 全面理解模式：明確指示如何處理部分資訊和資訊完整性
+        # improved prompt structure
         prompt = ChatPromptTemplate.from_messages([
             (
                 "system", 
@@ -216,25 +218,22 @@ class LangChainService:
         for idx, doc in enumerate(documents, 1):
             source = doc.metadata.get('source', 'unknown')
             content = doc.page_content
-            # 添加來源標記，讓 LLM 知道這些是來自同一個文件的不同片段
+            # add source marker
             docs_with_source.append(f"[片段 {idx} - 來源: {source}]\n{content}")
         
         docs_txt = "\n\n---\n\n".join(docs_with_source)
         context_length = len(docs_txt)
         log_print(f"[LangGraph Node] GENERATE - Context length: {context_length} characters")
         
-        # Context 長度檢測和警告
-        if context_length < 500:
-            log_print(f"[LangGraph Node] GENERATE - WARNING: Context is very short ({context_length} chars), answer may be incomplete")
-        elif context_length > 12000:
-            log_print(f"[LangGraph Node] GENERATE - WARNING: Context is very long ({context_length} chars), may exceed token limits")
+        # context length detection and warning
+        # if context_length < 500:
+        #     log_print(f"[LangGraph Node] GENERATE - WARNING: Context is very short ({context_length} chars), answer may be incomplete")
+        # elif context_length > 12000:
+        #     log_print(f"[LangGraph Node] GENERATE - WARNING: Context is very long ({context_length} chars), may exceed token limits")
+        # unique_sources = set([doc.metadata.get('source', 'unknown') for doc in documents])
+        # log_print(f"[LangGraph Node] GENERATE - Unique source files: {len(unique_sources)}")
         
-        # 統計來源文件數量（去重）
-        unique_sources = set([doc.metadata.get('source', 'unknown') for doc in documents])
-        log_print(f"[LangGraph Node] GENERATE - Unique source files: {len(unique_sources)}")
-        
-        # --- 3. 修改 invoke 參數 ---
-        # 這裡必須同時傳入 'context' 和 'messages'
+        # pass context and messages to LLM
         log_print(f"[LangGraph Node] GENERATE - Calling LLM to generate answer...")
         generation = rag_chain.invoke({
             "context": docs_txt, 
@@ -252,6 +251,7 @@ class LangChainService:
         workflow.add_node("grade_documents", self.grade_documents)
         workflow.add_node("generate", self.generate)
 
+        # connect nodes
         workflow.add_edge(START, "retrieve")
         workflow.add_edge("retrieve", "grade_documents")
         workflow.add_edge("grade_documents", "generate")
@@ -262,7 +262,6 @@ class LangChainService:
     # ==========================
     #      Public API
     # ==========================
-    # (process_file 函式保持不變，不用動)
     def process_file(self, file_path, original_filename):
         from langchain_community.document_loaders import PyPDFLoader, TextLoader
         from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -272,7 +271,7 @@ class LangChainService:
             else:
                 loader = TextLoader(file_path, encoding='utf-8')
             docs = loader.load()
-            # 全面理解模式：較大的 chunk size 和 overlap，保留更多上下文
+            # larger chunk size and overlap to retain more context
             text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=300)
             splits = text_splitter.split_documents(docs)
             for split in splits:
@@ -285,13 +284,12 @@ class LangChainService:
 
     def get_answer(self, question, session_id):
         """
-        執行 Graph，並掛載 Redis 記憶
+        execute Graph, and mount Redis memory
         """
         log_print(f"[LangGraph] Starting LangGraph workflow for question: {question[:100]}...")
         log_print(f"[LangGraph] Session ID: {session_id}")
         
-        # 1. 連線 Redis 取得歷史紀錄
-        #這會自動去 Redis 找 key 為 "chat:session_id" 的資料
+        # 1. connect to Redis to get history records
         log_print(f"[LangGraph] Loading conversation history from Redis...")
         chat_history = RedisChatMessageHistory(
             session_id=session_id,
@@ -301,27 +299,23 @@ class LangChainService:
         history_count = len(chat_history.messages)
         log_print(f"[LangGraph] Loaded {history_count} previous messages from Redis")
 
-        # 2. 準備輸入給 Graph 的訊息列表
-        # 我們把「歷史紀錄」+「現在使用者的問題」串接起來
-        # 注意：為了避免 Token 爆炸，實務上通常會限制只取最後 10 句，這裡先全取
+        # 2. update chat history and send to Graph
         current_messages = chat_history.messages + [HumanMessage(content=question)]
         log_print(f"[LangGraph] Total messages (including current): {len(current_messages)}")
 
-        # 3. 執行 Graph
-        # 注意：GraphState 需要包含所有必要的字段
+        # 3. execute Graph
         inputs = {
             "messages": current_messages, 
             "question": question,
-            "documents": [],  # 初始為空，會在 retrieve 節點中填充
-            "generation": "",  # 初始為空，會在 generate 節點中填充
-            "relevance": ""  # 可選字段
+            "documents": [],  # from retrieve node
+            "generation": "",  # from generate node
         }
         
         log_print(f"[LangGraph] Executing LangGraph workflow...")
         log_print(f"[LangGraph] Workflow: START -> retrieve -> grade_documents -> generate -> END")
         
         try:
-            # 使用 stream 來追蹤每個節點的執行
+            # use stream to track the execution of each node
             final_state = None
             for output in self.app.stream(inputs):
                 for node_name, state_content in output.items():
@@ -329,7 +323,7 @@ class LangChainService:
                     final_state = state_content
             
             if final_state is None:
-                # 如果 stream 沒有返回結果，使用 invoke
+                # if stream returns no result, use invoke() instead
                 log_print(f"[LangGraph] WARNING: Stream returned no output, using invoke() instead")
                 final_state = self.app.invoke(inputs)
                 
@@ -341,33 +335,23 @@ class LangChainService:
 
         log_print(f"[LangGraph] LangGraph workflow completed")
 
-        # 4. 解析結果
-        # 從 Graph 的 generation 字段取得 AI 的回答（不是從 messages）
+        # 4. parse the result from generation
         final_answer = final_state.get("generation", "")
         
-        # 如果 generation 為空，嘗試從 messages 中尋找最後一個 AI 訊息
-        if not final_answer:
-            from langchain_core.messages import AIMessage
-            for msg in reversed(final_state.get("messages", [])):
-                if isinstance(msg, AIMessage) and hasattr(msg, 'content') and msg.content:
-                    final_answer = msg.content
-                    break
-        
-        # 如果還是沒有答案，返回錯誤訊息
+        # if still no answer, return error message
         if not final_answer:
             final_answer = "抱歉，無法產生回應。"
             log_print(f"[LangGraph] WARNING: No answer generated, using default message")
         
         log_print(f"[LangGraph] Final answer length: {len(final_answer)} characters")
         
-        # 5. 更新 Redis 記憶
-        # 必須手動把這一輪的「問」與「答」存進去
+        # 5. update Redis memory
         log_print(f"[LangGraph] Saving conversation to Redis...")
         chat_history.add_user_message(question)
         chat_history.add_ai_message(final_answer)
         log_print(f"[LangGraph] Conversation saved to Redis")
         
-        # 6. 提取來源 (Artifacts)
+        # 6. extract sources (Artifacts)
         sources = []
         for doc in final_state.get("documents", []):
             if hasattr(doc, 'metadata') and doc.metadata:

@@ -329,7 +329,6 @@ class GraphState(TypedDict):
     messages: List[BaseMessage] # 對話歷史
     documents: List[Document]  # 檢索到的文件
     generation: str            # 生成的回答
-    relevance: str             # 相關性評分（可選）
 ```
 
 **TypedDict 說明：**
@@ -503,8 +502,7 @@ def get_answer(self, question, session_id):
         "messages": current_messages,
         "question": question,
         "documents": [],
-        "generation": "",
-        "relevance": ""
+        "generation": ""
     }
   
     # 3. 執行 Graph
