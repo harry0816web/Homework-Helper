@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()  # load .env for LangSmith, etc.
+
 from flask import Flask
 
 def create_app():

@@ -54,7 +54,7 @@ class LangChainService:
         
         # 2. Set LLM (using local Ollama)
         self.llm = ChatOllama(
-            model="gemini-3-flash-preview",
+            model="gemma3:latest",
             base_url=ollama_url,
             temperature=0
         )
