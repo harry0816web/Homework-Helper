@@ -38,7 +38,7 @@ Google Gemini (LLM)
 - **LangGraph**: 複雜工作流程管理
 - **ChromaDB**: 向量資料庫（語意搜尋）
 - **Redis**: 對話記憶儲存
-- **Ollama**: 本地 Embedding 模型
+- **Ollama (nomic-embed-text)**: 本地 Embedding 模型
 - **Ollama (gemini-3-flash)**: 本地LLM
 
 ## 🚀 快速開始
