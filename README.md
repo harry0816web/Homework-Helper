@@ -1,6 +1,6 @@
 # Homework Helper 
 
-一個基於 **LangChain**、**LangGraph** 和 **RAG** 技術的智能問答系統，可以上傳作業相關文件並進行智能問答。
+一個基於 **LangChain** 和 **RAG** 技術的智能問答系統，可以上傳作業相關文件並進行智能問答。
 
 ## ✨ 功能特色
 
@@ -38,7 +38,7 @@ Google Gemini (LLM)
 - **LangGraph**: 複雜工作流程管理
 - **ChromaDB**: 向量資料庫（語意搜尋）
 - **Redis**: 對話記憶儲存
-- **Ollama**: 本地 Embedding 模型
+- **Ollama (nomic-embed-text)**: 本地 Embedding 模型
 - **Ollama (gemini-3-flash)**: 本地LLM
 
 ## 🚀 快速開始
@@ -320,18 +320,6 @@ export OLLAMA_BASE_URL=http://localhost:11434
 flask run --debug
 ```
 
-### 除錯
-
-應用程式提供除錯方法 `get_graph_trace()`，可以查看 LangGraph 執行流程：
-
-```python
-from app.services.langchain_svc import LangChainService
-
-svc = LangChainService()
-trace = svc.get_graph_trace("你的問題")
-print(trace)
-```
-
 ## 🚢 部署
 
 ### 生產環境部署
@@ -339,55 +327,5 @@ print(trace)
 ```bash
 # 使用 Docker Compose
 docker-compose up -d --build
-
-# 或使用 Gunicorn
-gunicorn -w 4 -b 0.0.0.0:5000 "app:create_app()"
 ```
 
-## 📝 授權
-
-MIT License
-
-## 🙋 常見問題
-
-### Q: Ollama 無法連線？
-
-**A:** 確保 Ollama 服務正在運行：
-
-```bash
-ollama serve
-```
-
-在 Docker 容器中，使用 `host.docker.internal` 訪問主機服務。
-
-### Q: ChromaDB 連線失敗？
-
-**A:** 確保 ChromaDB 容器正在運行：
-
-```bash
-docker-compose ps
-docker-compose logs chromadb
-```
-
-### Q: 如何清除對話歷史？
-
-**A:** 清除 Redis 中的對話資料：
-
-```bash
-docker exec -it redis_service redis-cli
-> KEYS chat:*
-> DEL chat:session_id
-```
-
-### Q: 如何重置知識庫？
-
-**A:** 刪除 ChromaDB 的持久化資料：
-
-```bash
-docker-compose down -v
-docker-compose up -d
-```
-
----
-
-**需要更多技術細節？** 請參考 [ARCHITECTURE.md](./ARCHITECTURE.md) 了解完整的架構設計和實作細節。
