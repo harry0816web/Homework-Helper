@@ -8,6 +8,8 @@
 - 💬 **智能問答**：基於上傳的文件內容回答使用者問題
 - 🧠 **對話記憶**：使用 Redis 儲存對話歷史，支援多輪對話
 - 🔍 **文件評分機制**：使用 LLM 評估檢索文件的相關性，提升回答品質
+- 🗂️ **Notion 課程同步**：可從 Notion 課程資料庫載入課程、建立作業到行事曆資料庫
+- 📎 **作業附件同步**：作業 PDF 可寫入 Notion `files` 欄位，並同步向量化到 ChromaDB
 - 🎨 **現代化介面**：簡潔美觀的 Web 介面
 
 ## 🏗️ 技術架構
@@ -78,6 +80,15 @@ OLLAMA_BASE_URL=http://host.docker.internal:11434
 # ChromaDB 設定 (Docker Compose 會自動設定)
 CHROMA_DB_HOST=chromadb
 CHROMA_DB_PORT=8000
+
+# Notion 同步設定
+NOTION_INTEGRATION_TOKEN=your_notion_integration_token
+NOTION_COURSE_DATABASE_ID=your_course_database_id
+NOTION_HOMEWORK_DATABASE_ID=your_homework_database_id
+
+# 可選：自訂 Notion 欄位名稱（未設定時使用預設）
+# NOTION_COURSE_NAME_PROPERTY=courses
+# NOTION_HOMEWORK_TAGS_PROPERTY=Tags
 ```
 
 **注意：** 不再需要 Google Gemini API Key，所有模型都在本地運行。
@@ -116,14 +127,25 @@ flask run
 
 ## 📖 使用方式
 
-### 1. 上傳文件
+### 1. 課程與作業管理（Notion 同步）
+
+1. 訪問 `http://localhost:5001`
+2. 在左側「課程專區」選擇課程（資料來自 Notion course database）
+3. 可查看該課程歷史作業
+4. 可建立新作業（同步寫入 Notion homework database）
+5. 上傳 PDF 時會：
+   - 寫入 Notion `files` 欄位
+   - 切片後寫入 ChromaDB 供後續檢索
+6. 歷史作業若無 PDF，可用 `上傳` 按鈕補傳附件並同步 ChromaDB
+
+### 2. 上傳文件（通用知識庫）
 
 1. 訪問 `http://localhost:5001`
 2. 在左側面板選擇 PDF 或文字檔
 3. 點擊「上傳並建立索引」
 4. 等待處理完成（文件會被分塊並向量化儲存到 ChromaDB）
 
-### 2. 開始問答
+### 3. 開始問答
 
 1. 在右側聊天介面輸入問題
 2. 系統會自動：
@@ -164,6 +186,41 @@ Content-Type: application/json
 }
 ```
 
+### Notion 課程清單
+
+```bash
+GET /api/notion/courses
+```
+
+### Notion 作業清單（依課程）
+
+```bash
+GET /api/notion/homeworks?course_id=<course_page_id>
+```
+
+### 建立 Notion 作業
+
+```bash
+POST /api/notion/homeworks
+Content-Type: multipart/form-data
+
+course_id: <course_page_id>
+name: <homework_name>
+due_date: 2026-04-03
+status: Not started | In progress | almost_done | Done
+tags: ["作業"]   # 前端預設帶入
+file: <optional_pdf>
+```
+
+### 補傳既有作業附件
+
+```bash
+POST /api/notion/homeworks/<homework_id>/file
+Content-Type: multipart/form-data
+
+file: <pdf>
+```
+
 **回應：**
 
 ```json
@@ -189,6 +246,7 @@ homework-helper/
 │   │   └── index.html     # 前端介面
 │   └── services/          # 服務層
 │       ├── langchain_svc.py  # LangChain 核心服務
+│       ├── notion_svc.py     # Notion 同步服務
 │       └── redis_svc.py     # Redis 服務
 └── ARCHITECTURE.md        # 詳細架構文檔（學習用）
 ```
@@ -221,6 +279,11 @@ homework-helper/
 | `OLLAMA_BASE_URL` | Ollama 服務地址       | ❌   | `http://host.docker.internal:11434` |
 | `CHROMA_DB_HOST`  | ChromaDB 主機         | ❌   | `chromadb`                          |
 | `CHROMA_DB_PORT`  | ChromaDB 端口         | ❌   | `8000`                              |
+| `NOTION_INTEGRATION_TOKEN` | Notion Integration Token | ✅ | - |
+| `NOTION_COURSE_DATABASE_ID` | Notion 課程資料庫 ID | ✅ | - |
+| `NOTION_HOMEWORK_DATABASE_ID` | Notion 作業資料庫 ID | ✅ | - |
+| `NOTION_COURSE_NAME_PROPERTY` | 課程名稱欄位（可選） | ❌ | 自動偵測 |
+| `NOTION_HOMEWORK_TAGS_PROPERTY` | 作業 tags 欄位名（可選） | ❌ | `tags` |
 
 ## 🐳 Docker 服務
 

@@ -14,7 +14,7 @@ from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.documents import Document
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 
 # --- Redis 聊天紀錄 ---
 from langchain_community.chat_message_histories import RedisChatMessageHistory
@@ -28,12 +28,15 @@ from pydantic import BaseModel, Field
 from langgraph.graph import END, StateGraph, START
 
 import chromadb
+from datetime import datetime
 
 # --- Define Graph State ---
 # for the graph to flow data between nodes
-class GraphState(TypedDict):
+class GraphState(TypedDict, total=False):
     question: str
     messages: List[BaseMessage]
+    filtered_messages: List[BaseMessage]
+    rewritten_query: str
     documents: List[Document]
     generation: str
 
@@ -45,6 +48,14 @@ class GradeDocuments(BaseModel):
 class GradeAnswer(BaseModel):
     """grade if the answer is relevant to the question"""
     binary_score: str = Field(description="回答是否解決了問題，'yes' 或 'no'")
+
+class FilterHistoryOutput(BaseModel):
+    """LLM 輸出：篩選後的相關訊息索引"""
+    relevant_indices: List[int] = Field(description="與當前問題相關的訊息索引列表 (0-based)")
+
+class QuestionRewriterOutput(BaseModel):
+    """LLM 輸出：Standalone Question Generation 改寫後的查詢"""
+    rewritten_query: str = Field(description="改寫後、無指代模糊的獨立查詢")
 
 # --- LangChainService ---
 class LangChainService:
@@ -86,11 +97,113 @@ class LangChainService:
     #      Node Functions
     # ==========================
 
-    def retrieve(self, state: GraphState):
-        """retrieve documents from vector store"""
+    def filter_history(self, state: GraphState):
+        """篩選與當前問題相關的歷史訊息（含 [System] 上傳紀錄）"""
         question = state.get("question", "")
+        messages = state.get("messages", [])
+
+        if not question and messages:
+            last_msg = messages[-1]
+            if hasattr(last_msg, 'content'):
+                question = last_msg.content
+            elif isinstance(last_msg, dict):
+                question = last_msg.get('content', '')
+
+        # 無歷史訊息或僅有當前問題時，直接 pass-through
+        if len(messages) <= 1:
+            log_print(f"[LangGraph Node] FILTER_HISTORY - No history to filter, pass-through")
+            return {"filtered_messages": messages}
+
+        # 將訊息格式化供 LLM 分析（含 System 訊息）
+        history_text = ""
+        for i, msg in enumerate(messages[:-1]):
+            msg_type = getattr(msg, 'type', None) if hasattr(msg, 'type') else None
+            if msg_type == "human":
+                role = "User"
+            elif msg_type == "system":
+                role = "System"
+            else:
+                role = "Assistant"
+            content = msg.content if hasattr(msg, 'content') else str(msg.get('content', ''))
+            history_text += f"[{i}] {role}: {content}\n"
+
+        structured_filter = self.llm.with_structured_output(FilterHistoryOutput)
+        system = """你是一個對話脈絡分析員。給定使用者的當前問題與對話歷史（含 [System] 上傳檔案紀錄），請篩選出與理解當前問題相關的歷史訊息索引。
+特別是當問題含指代詞如「它」「這個」「這份文件」時，務必包含 [System] 上傳紀錄以便後續改寫問題。"""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system),
+            ("human", "對話歷史 (索引從 0 開始):\n{history}\n\n當前問題: {question}\n\n請輸出 relevant_indices。"),
+        ])
+        chain = prompt | structured_filter
+
+        try:
+            result = chain.invoke({"history": history_text, "question": question})
+            filtered = [messages[i] for i in result.relevant_indices if 0 <= i < len(messages)]
+            log_print(f"[LangGraph Node] FILTER_HISTORY - Filtered {len(filtered)}/{len(messages)-1} messages")
+            return {"filtered_messages": filtered + [messages[-1]]}
+        except Exception as e:
+            log_print(f"[LangGraph Node] FILTER_HISTORY - Error, pass-through: {e}")
+            return {"filtered_messages": messages}
+
+    def question_rewriter(self, state: GraphState):
+        """Standalone Question Generation：根據 filtered_messages 改寫問題，解決指代消解"""
+        question = state.get("question", "")
+        filtered_messages = state.get("filtered_messages", [])
+
+        if not question and filtered_messages:
+            last_msg = filtered_messages[-1]
+            if hasattr(last_msg, 'content'):
+                question = last_msg.content
+            elif isinstance(last_msg, dict):
+                question = last_msg.get('content', '')
+
+        # 無篩選訊息或無問題時 pass-through；僅有當前問題無歷史時也 pass-through（省一次 LLM 呼叫）
+        if not filtered_messages or not question:
+            log_print(f"[LangGraph Node] QUESTION_REWRITER - No context, pass-through")
+            return {"rewritten_query": question or ""}
+        if len(filtered_messages) <= 1:
+            log_print(f"[LangGraph Node] QUESTION_REWRITER - No history to rewrite, pass-through")
+            return {"rewritten_query": question}
+
+        # 將 filtered_messages 格式化供 LLM 改寫
+        history_text = ""
+        for msg in filtered_messages[:-1]:
+            msg_type = getattr(msg, 'type', None) if hasattr(msg, 'type') else None
+            if msg_type == "human":
+                role = "User"
+            elif msg_type == "system":
+                role = "System"
+            else:
+                role = "Assistant"
+            content = msg.content if hasattr(msg, 'content') else str(msg.get('content', ''))
+            history_text += f"{role}: {content}\n"
+
+        structured_rewriter = self.llm.with_structured_output(QuestionRewriterOutput)
+        system = """你是一個問題改寫員。給定對話歷史（含 [System] 上傳檔案紀錄）與使用者當前問題，請改寫成「獨立、無指代模糊」的查詢。
+
+規則：
+- 若問題含「這份文件」「它」「這個」等指代，請根據歷史（特別是上傳紀錄）替換為具體檔名或主題
+- 若無需改寫，請回傳原始問題"""
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", system),
+            ("human", "對話歷史:\n{history}\n\n當前問題: {question}\n\n請輸出改寫後的 rewritten_query。"),
+        ])
+        chain = prompt | structured_rewriter
+
+        try:
+            result = chain.invoke({"history": history_text, "question": question})
+            rewritten = result.rewritten_query.strip() if result.rewritten_query else question
+            log_print(f"[LangGraph Node] QUESTION_REWRITER - Rewritten: {rewritten[:80]}...")
+            return {"rewritten_query": rewritten}
+        except Exception as e:
+            log_print(f"[LangGraph Node] QUESTION_REWRITER - Error, pass-through: {e}")
+            return {"rewritten_query": question}
+
+    def retrieve(self, state: GraphState):
+        """retrieve documents from vector store (uses rewritten_query for Standalone Question Generation)"""
+        question = state.get("question", "")
+        rewritten_query = state.get("rewritten_query", "")
         if not question:
-            # if no question, try to get the last user message from messages
             messages = state.get("messages", [])
             if messages:
                 last_msg = messages[-1]
@@ -98,10 +211,11 @@ class LangChainService:
                     question = last_msg.content
                 elif isinstance(last_msg, dict):
                     question = last_msg.get('content', '')
-        
-        log_print(f"[LangGraph Node] RETRIEVE - Starting retrieval for question: {question[:100]}...")
-        # get chunks from vector store
-        documents = self.retriever.invoke(question) if question else []
+
+        # 使用改寫後的查詢進行檢索，若無則用原始 question
+        search_query = rewritten_query if rewritten_query else question
+        log_print(f"[LangGraph Node] RETRIEVE - Search query: {search_query[:100]}...")
+        documents = self.retriever.invoke(search_query) if search_query else []
         log_print(f"[LangGraph Node] RETRIEVE - Retrieved {len(documents)} chunks from vector store")
         return {"documents": documents, "question": question}
 
@@ -169,19 +283,21 @@ class LangChainService:
         """generate answer based on the retrieved documents"""
         question = state.get("question", "")
         documents = state.get("documents", [])
-        messages = state.get("messages", []) # get the complete conversation history from state
-        
-        if not question and messages:
-            # if no question, get the last user message from messages
-            last_msg = messages[-1]
+        messages = state.get("messages", [])
+        filtered_messages = state.get("filtered_messages", [])
+        # 使用 filter_history 篩選後的訊息，若無則 fallback 到完整 messages
+        context_messages = filtered_messages if filtered_messages else messages
+
+        if not question and context_messages:
+            last_msg = context_messages[-1]
             if hasattr(last_msg, 'content'):
                 question = last_msg.content
             elif isinstance(last_msg, dict):
                 question = last_msg.get('content', '')
-        
+
         log_print(f"[LangGraph Node] GENERATE - Starting answer generation")
         log_print(f"[LangGraph Node] GENERATE - Using {len(documents)} documents as context")
-        log_print(f"[LangGraph Node] GENERATE - Conversation history: {len(messages)} messages")
+        log_print(f"[LangGraph Node] GENERATE - Conversation history: {len(context_messages)} messages")
         
         if not documents:
             log_print(f"[LangGraph Node] GENERATE - No documents available, returning default message")
@@ -233,11 +349,11 @@ class LangChainService:
         # unique_sources = set([doc.metadata.get('source', 'unknown') for doc in documents])
         # log_print(f"[LangGraph Node] GENERATE - Unique source files: {len(unique_sources)}")
         
-        # pass context and messages to LLM
+        # pass context and filtered messages to LLM
         log_print(f"[LangGraph Node] GENERATE - Calling LLM to generate answer...")
         generation = rag_chain.invoke({
-            "context": docs_txt, 
-            "messages": messages
+            "context": docs_txt,
+            "messages": context_messages
         })
         
         answer_length = len(generation.content) if hasattr(generation, 'content') else 0
@@ -247,12 +363,16 @@ class LangChainService:
 
     def build_graph(self):
         workflow = StateGraph(GraphState)
+        workflow.add_node("filter_history", self.filter_history)
+        workflow.add_node("question_rewriter", self.question_rewriter)
         workflow.add_node("retrieve", self.retrieve)
         workflow.add_node("grade_documents", self.grade_documents)
         workflow.add_node("generate", self.generate)
 
-        # connect nodes
-        workflow.add_edge(START, "retrieve")
+        # connect nodes: filter_history -> question_rewriter -> retrieve -> grade_documents -> generate
+        workflow.add_edge(START, "filter_history")
+        workflow.add_edge("filter_history", "question_rewriter")
+        workflow.add_edge("question_rewriter", "retrieve")
         workflow.add_edge("retrieve", "grade_documents")
         workflow.add_edge("grade_documents", "generate")
         workflow.add_edge("generate", END)
@@ -281,6 +401,22 @@ class LangChainService:
         except Exception as e:
             log_print(f"Error: {e}")
             raise e
+
+    def add_upload_system_message(self, session_id: str, file_id: str, filename: str):
+        """上傳成功後，在該 session 的聊天記錄中加入 System Message 記錄檔案資訊"""
+        chat_history = RedisChatMessageHistory(
+            session_id=session_id,
+            url=self.redis_url,
+            key_prefix="chat:"
+        )
+        upload_time = datetime.now().strftime("%Y-%m-%d")
+        content = (
+            "[System]\n"
+            "User has uploaded the following files in this session:\n"
+            f"- id: {file_id}, name: {filename}, upload_time: {upload_time}"
+        )
+        chat_history.add_message(SystemMessage(content=content))
+        log_print(f"[LangGraph] Added upload system message for {filename} (id: {file_id})")
 
     def get_answer(self, question, session_id):
         """
@@ -312,7 +448,7 @@ class LangChainService:
         }
         
         log_print(f"[LangGraph] Executing LangGraph workflow...")
-        log_print(f"[LangGraph] Workflow: START -> retrieve -> grade_documents -> generate -> END")
+        log_print(f"[LangGraph] Workflow: START -> filter_history -> question_rewriter -> retrieve -> grade_documents -> generate -> END")
         
         try:
             # use stream to track the execution of each node

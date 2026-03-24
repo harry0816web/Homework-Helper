@@ -98,6 +98,31 @@
         .input-area {
             flex-shrink: 0;
         }
+        .section-title {
+            font-size: 0.95rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .homework-list {
+            max-height: 220px;
+            overflow-y: auto;
+            border: 1px solid #e9ecef;
+            border-radius: 8px;
+            padding: 8px;
+            background: #fff;
+        }
+        .homework-item {
+            padding: 8px;
+            border-bottom: 1px solid #f1f3f5;
+            font-size: 0.9rem;
+        }
+        .homework-item:last-child {
+            border-bottom: none;
+        }
+        .mini-text {
+            color: #6c757d;
+            font-size: 0.8rem;
+        }
     </style>
 </head>
 <body>
@@ -107,27 +132,37 @@
         
         <div class="col-md-4 h-100">
             <div class="card p-4 h-100">
-                <h4 class="mb-4">Upload Hws</h4>
-                
+                <h4 class="mb-3">課程專區</h4>
+
                 <div class="mb-3">
-                    <label for="topicInput" class="form-label">作業/專案主題</label>
-                    <input type="text" class="form-control" id="topicInput" placeholder="例如：LeetCode, 演算法作業 1">
+                    <label for="courseSelect" class="form-label">選擇課程</label>
+                    <select class="form-select" id="courseSelect" onchange="handleCourseChange()">
+                        <option value="">載入課程中...</option>
+                    </select>
+                    <div class="mini-text mt-1">資料來源：Notion 課程 Database</div>
                 </div>
 
                 <div class="mb-3">
-                    <label for="fileInput" class="form-label">上傳參考資料 (PDF/Code)</label>
-                    <input type="file" class="form-control" id="fileInput">
+                    <div class="section-title">歷史作業</div>
+                    <div id="homeworkList" class="homework-list">
+                        <div class="mini-text">請先選擇課程</div>
+                    </div>
+                    <input type="file" id="existingHwPdfInput" class="d-none" accept="application/pdf" onchange="handleExistingHomeworkFileSelected(event)">
                 </div>
 
-                <button id="uploadBtn" class="btn btn-success w-100" onclick="uploadFile()">
-                    上傳並建立索引
-                </button>
-                
-                <hr>
-                <div id="uploadStatus" class="alert alert-secondary d-none" role="alert"></div>
-                
-                <div class="mt-auto">
-                    <small class="text-muted">系統狀態：<span class="text-success">● 連線正常</span></small>
+                <div class="mb-3">
+                    <div class="section-title">新增作業到行事曆</div>
+                    <input type="text" id="hwNameInput" class="form-control mb-2" placeholder="作業名稱（Name）">
+                    <input type="date" id="hwDateInput" class="form-control mb-2">
+                    <input type="file" id="hwPdfInput" class="form-control mb-2" accept="application/pdf">
+                    <select id="hwStatusInput" class="form-select mb-2">
+                        <option value="Not started" selected>Not started</option>
+                        <option value="In progress">In progress</option>
+                        <option value="almost_done">almost_done</option>
+                        <option value="Done">Done</option>
+                    </select>
+                    <button id="createHomeworkBtn" class="btn btn-primary w-100" onclick="createHomework()">新增作業</button>
+                    <div id="homeworkCreateStatus" class="mini-text mt-2"></div>
                 </div>
             </div>
         </div>
@@ -157,6 +192,8 @@
 
     // 0. 初始化 session_id
     let sessionId = localStorage.getItem('chat_session_id');
+    let selectedCourseId = "";
+    let selectedHomeworkIdForUpload = "";
     if (!sessionId) {
         // 如果沒有，生成一個隨機 ID
         sessionId = 'sess_' + Math.random().toString(36).substr(2, 9);
@@ -164,48 +201,187 @@
     }
     console.log("Current Session ID:", sessionId);
 
-    // 1. 處理檔案上傳
-    async function uploadFile() {
-        const fileInput = document.getElementById('fileInput');
-        const topicInput = document.getElementById('topicInput');
-        const statusDiv = document.getElementById('uploadStatus');
-        const btn = document.getElementById('uploadBtn');
+    async function loadCourses() {
+        const select = document.getElementById('courseSelect');
+        select.innerHTML = '<option value="">載入中...</option>';
 
-        if (!fileInput.files[0]) {
-            alert("請選擇檔案！");
+        try {
+            const response = await fetch('/api/notion/courses');
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '課程載入失敗');
+
+            const courses = data.courses || [];
+            if (!courses.length) {
+                select.innerHTML = '<option value="">目前沒有課程資料</option>';
+                return;
+            }
+
+            select.innerHTML = '<option value="">請選擇課程</option>';
+            courses.forEach((course) => {
+                const option = document.createElement('option');
+                option.value = course.id;
+                option.textContent = course.name;
+                select.appendChild(option);
+            });
+        } catch (error) {
+            select.innerHTML = '<option value="">無法載入課程</option>';
+            renderHomeworkList([], `錯誤：${error.message}`);
+        }
+    }
+
+    async function handleCourseChange() {
+        const select = document.getElementById('courseSelect');
+        selectedCourseId = select.value;
+        if (!selectedCourseId) {
+            renderHomeworkList([], '請先選擇課程');
+            return;
+        }
+        await loadHomeworks(selectedCourseId);
+    }
+
+    async function loadHomeworks(courseId) {
+        renderHomeworkList([], '讀取作業中...');
+        try {
+            const response = await fetch(`/api/notion/homeworks?course_id=${encodeURIComponent(courseId)}`);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '作業載入失敗');
+            renderHomeworkList(data.homeworks || []);
+        } catch (error) {
+            renderHomeworkList([], `錯誤：${error.message}`);
+        }
+    }
+
+    function renderHomeworkList(homeworks = [], hint = '') {
+        const list = document.getElementById('homeworkList');
+        if (hint) {
+            list.innerHTML = `<div class="mini-text">${hint}</div>`;
+            return;
+        }
+        if (!homeworks.length) {
+            list.innerHTML = '<div class="mini-text">目前此課程尚無作業記錄</div>';
             return;
         }
 
-        const formData = new FormData();
-        formData.append('file', fileInput.files[0]);
-        formData.append('topic', topicInput.value);
+        const escapeHtml = (value) => {
+            return String(value || '')
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", '&#39;');
+        };
 
-        // UILoading 狀態
-        btn.disabled = true;
-        btn.innerText = "處理中...";
-        statusDiv.className = "alert alert-info";
-        statusDiv.innerText = "正在上傳並進行 Embedding...";
-        statusDiv.classList.remove('d-none');
+        list.innerHTML = homeworks.map((hw) => {
+            const tags = escapeHtml((hw.tags || []).join(', '));
+            const date = escapeHtml(hw.date || '未設定日期');
+            const status = escapeHtml(hw.status || '未設定狀態');
+            const name = escapeHtml(hw.name || '(未命名作業)');
+            const files = Array.isArray(hw.files) ? hw.files : [];
+            const firstFile = files.length ? files[0] : null;
+            const fileUrl = firstFile
+                ? (firstFile.external?.url || firstFile.file?.url || '')
+                : '';
+            return `
+                <div class="homework-item">
+                    <div><strong>${name}</strong></div>
+                    <div class="mini-text">日期：${date}</div>
+                    <div class="mini-text">狀態：${status}</div>
+                    <div class="mini-text">標籤：${tags || '—'}</div>
+                    <div class="mini-text">
+                        PDF：${fileUrl
+                            ? `<a href="${escapeHtml(fileUrl)}" target="_blank" rel="noopener noreferrer">預覽</a>`
+                            : `<button type="button" class="btn btn-sm btn-outline-primary py-0 px-2" onclick="openExistingHomeworkFilePicker('${hw.id}')">上傳</button>`}
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function openExistingHomeworkFilePicker(homeworkId) {
+        selectedHomeworkIdForUpload = homeworkId;
+        const input = document.getElementById('existingHwPdfInput');
+        input.value = '';
+        input.click();
+    }
+
+    async function handleExistingHomeworkFileSelected(event) {
+        const file = event.target.files?.[0];
+        if (!file || !selectedHomeworkIdForUpload) return;
+
+        const statusEl = document.getElementById('homeworkCreateStatus');
+        statusEl.textContent = '補傳附件中...';
 
         try {
-            const response = await fetch('/api/upload', {
+            const formData = new FormData();
+            formData.append('file', file);
+
+            const response = await fetch(`/api/notion/homeworks/${encodeURIComponent(selectedHomeworkIdForUpload)}/file`, {
                 method: 'POST',
                 body: formData
             });
             const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '附件上傳失敗');
 
-            if (response.ok) {
-                statusDiv.className = "alert alert-success";
-                statusDiv.innerText = data.message;
-            } else {
-                throw new Error(data.error || "上傳失敗");
-            }
+            const chunks = data?.data?.chroma_chunks ?? 0;
+            statusEl.textContent = `附件上傳成功，已同步 Chroma（${chunks} chunks）`;
+            await loadHomeworks(selectedCourseId);
         } catch (error) {
-            statusDiv.className = "alert alert-danger";
-            statusDiv.innerText = "錯誤: " + error.message;
+            statusEl.textContent = `錯誤：${error.message}`;
+        } finally {
+            selectedHomeworkIdForUpload = "";
+            event.target.value = '';
+        }
+    }
+
+    async function createHomework() {
+        const statusEl = document.getElementById('homeworkCreateStatus');
+        const btn = document.getElementById('createHomeworkBtn');
+        const name = document.getElementById('hwNameInput').value.trim();
+        const dueDate = document.getElementById('hwDateInput').value;
+        const pdfFile = document.getElementById('hwPdfInput').files[0];
+        const status = document.getElementById('hwStatusInput').value;
+
+        if (!selectedCourseId) {
+            statusEl.textContent = '請先選擇課程';
+            return;
+        }
+        if (!name) {
+            statusEl.textContent = '請輸入作業名稱';
+            return;
+        }
+
+        const tags = ['作業'];
+
+        btn.disabled = true;
+        statusEl.textContent = '建立中...';
+        try {
+            const formData = new FormData();
+            formData.append('course_id', selectedCourseId);
+            formData.append('name', name);
+            formData.append('due_date', dueDate || '');
+            formData.append('tags', JSON.stringify(tags));
+            formData.append('status', status || '');
+            if (pdfFile) {
+                formData.append('file', pdfFile);
+            }
+
+            const response = await fetch('/api/notion/homeworks', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || '建立失敗');
+
+            statusEl.textContent = '新增成功，已寫入行事曆資料庫';
+            document.getElementById('hwNameInput').value = '';
+            document.getElementById('hwDateInput').value = '';
+            document.getElementById('hwPdfInput').value = '';
+            document.getElementById('hwStatusInput').value = 'Not started';
+            await loadHomeworks(selectedCourseId);
+        } catch (error) {
+            statusEl.textContent = `錯誤：${error.message}`;
         } finally {
             btn.disabled = false;
-            btn.innerText = "上傳並建立索引";
         }
     }
 
@@ -278,6 +454,7 @@
     // 頁面載入時確保滾動到底部
     window.addEventListener('load', function() {
         scrollToBottom();
+        loadCourses();
     });
 
     function removeMessage(id) {
