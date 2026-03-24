@@ -86,7 +86,7 @@ class LangChainService:
             collection_name="my_knowledge_base",
             embedding_function=self.embeddings
         )
-        self.retriever = self.vector_store.as_retriever(search_kwargs={"k": 8})  # k -> 8 to increase retrieval results
+        self.retriever = self.vector_store.as_retriever(search_kwargs={"k": 12})  # k -> 8 to increase retrieval results
 
         # Initialize Graph
         self.app = self.build_graph()
@@ -313,7 +313,6 @@ class LangChainService:
 1. **完整回答優先**：如果問題是詢問「這份作業要做什麼」、「有哪些要求」等需要全面資訊的問題，請盡可能列出所有在 Context 中提到的要求和內容。
 
 2. **資訊完整性說明**：
-   - 如果 Context 中只提到部分要求（例如只看到 "Requirement 6/6"），請明確說明：「根據提供的資訊，目前只看到 Requirement X/X，可能還有其他要求未包含在檢索結果中」
    - 如果問題需要完整資訊但 Context 明顯不足，請誠實說明：「根據檢索到的資訊，可能只涵蓋了部分內容，建議查看完整文件以獲得所有要求」
 
 3. **引用來源**：請引用具體的來源資訊，例如「根據 Requirement X...」或「在 [來源] 中提到...」
